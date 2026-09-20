@@ -8,6 +8,9 @@ import pino from "pino";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+let sock = null;
+let pairingInProgress = false;
+
 app.get("/", (req, res) => {
   res.send("🤖 Kingsley is running.");
 });
@@ -15,8 +18,51 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => {
   res.json({
     bot: "Kingsley",
-    status: "online"
+    status: sock ? "running" : "starting"
   });
+});
+
+app.get("/pair", async (req, res) => {
+  const secret = req.query.secret;
+
+  if (!process.env.PAIRING_SECRET) {
+    return res.status(500).send("PAIRING_SECRET is not configured.");
+  }
+
+  if (secret !== process.env.PAIRING_SECRET) {
+    return res.status(401).send("Unauthorized.");
+  }
+
+  if (!process.env.PAIRING_PHONE) {
+    return res.status(500).send("PAIRING_PHONE is not configured.");
+  }
+
+  if (!sock) {
+    return res.status(503).send("Kingsley is still starting. Try again shortly.");
+  }
+
+  if (pairingInProgress) {
+    return res.status(429).send("A pairing request is already running.");
+  }
+
+  try {
+    pairingInProgress = true;
+
+    const code = await sock.requestPairingCode(
+      process.env.PAIRING_PHONE
+    );
+
+    res.json({
+      success: true,
+      pairingCode: code
+    });
+
+  } catch (error) {
+    console.error("Pairing error:", error);
+    res.status(500).send("Could not create pairing code.");
+  } finally {
+    pairingInProgress = false;
+  }
 });
 
 app.listen(PORT, () => {
@@ -27,7 +73,7 @@ async function startKingsley() {
   const { state, saveCreds } =
     await useMultiFileAuthState("./auth");
 
-  const sock = makeWASocket({
+  sock = makeWASocket({
     auth: state,
     logger: pino({ level: "silent" })
   });
@@ -36,16 +82,11 @@ async function startKingsley() {
 
   sock.ev.on("connection.update", ({
     connection,
-    lastDisconnect,
-    qr
+    lastDisconnect
   }) => {
 
-    if (qr) {
-      console.log("📱 WhatsApp pairing code/QR is available.");
-    }
-
     if (connection === "connecting") {
-      console.log("🔌 Connecting Kingsley to WhatsApp...");
+      console.log("🔌 Connecting Kingsley...");
     }
 
     if (connection === "open") {
@@ -58,9 +99,15 @@ async function startKingsley() {
 
       if (statusCode !== DisconnectReason.loggedOut) {
         console.log("🔄 Connection closed. Restarting...");
-        setTimeout(startKingsley, 5000);
+
+        sock = null;
+
+        setTimeout(() => {
+          startKingsley().catch(console.error);
+        }, 5000);
       } else {
         console.log("❌ WhatsApp session was logged out.");
+        sock = null;
       }
     }
   });
