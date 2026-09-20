@@ -16,9 +16,19 @@ async function startKingsley() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
+  sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
+
+    if (qr) {
+      console.log("📱 QR code received.");
+      console.log("Use a WhatsApp-compatible pairing method to connect.");
+    }
+
+    if (connection === "connecting") {
+      console.log("🔌 Kingsley is connecting...");
+    }
+
     if (connection === "open") {
-      console.log("✅ Kingsley is connected to WhatsApp!");
+      console.log("✅ KINGSLEY IS CONNECTED!");
     }
 
     if (connection === "close") {
@@ -29,12 +39,8 @@ async function startKingsley() {
         console.log("🔄 Connection closed. Restarting...");
         startKingsley();
       } else {
-        console.log("❌ Kingsley was logged out.");
+        console.log("❌ WhatsApp session was logged out.");
       }
-    }
-
-    if (connection === "connecting") {
-      console.log("🔌 Connecting Kingsley to WhatsApp...");
     }
   });
 
@@ -50,7 +56,7 @@ async function startKingsley() {
 
     const command = text.trim().toLowerCase();
 
-    if (command === "hi" || command === "hello") {
+    if (command === "hi") {
       await sock.sendMessage(message.key.remoteJid, {
         text: "👋 Hello! I'm Kingsley."
       });
@@ -61,8 +67,8 @@ async function startKingsley() {
         text:
           "🤖 *KINGSLEY MENU*\n\n" +
           "• hi — Say hello\n" +
-          "• menu — Show this menu\n\n" +
-          "More features coming soon..."
+          "• menu — Show commands\n\n" +
+          "🚀 More features coming soon."
       });
     }
   });
