@@ -1,7 +1,8 @@
 import express from "express";
 import makeWASocket, {
   useMultiFileAuthState,
-  DisconnectReason
+  DisconnectReason,
+  fetchLatestWaWebVersion
 } from "@whiskeysockets/baileys";
 import pino from "pino";
 
@@ -24,10 +25,6 @@ app.get("/health", (req, res) => {
 
 app.get("/pair", async (req, res) => {
   const secret = req.query.secret;
-
-  if (!process.env.PAIRING_SECRET) {
-    return res.status(500).send("PAIRING_SECRET is not configured.");
-  }
 
   if (secret !== process.env.PAIRING_SECRET) {
     return res.status(401).send("Unauthorized.");
@@ -73,9 +70,17 @@ async function startKingsley() {
   const { state, saveCreds } =
     await useMultiFileAuthState("./auth");
 
+  const { version } = await fetchLatestWaWebVersion();
+
+  console.log(
+    `📱 WhatsApp Web version: ${version.join(".")}`
+  );
+
   sock = makeWASocket({
     auth: state,
-    logger: pino({ level: "silent" })
+    version,
+    logger: pino({ level: "silent" }),
+    browser: ["Ubuntu", "Chrome", "1.0.0"]
   });
 
   sock.ev.on("creds.update", saveCreds);
@@ -97,17 +102,20 @@ async function startKingsley() {
       const statusCode =
         lastDisconnect?.error?.output?.statusCode;
 
-      if (statusCode !== DisconnectReason.loggedOut) {
-        console.log("🔄 Connection closed. Restarting...");
+      console.log(
+        `⚠️ WhatsApp connection closed. Code: ${statusCode ?? "unknown"}`
+      );
 
-        sock = null;
+      sock = null;
+
+      if (statusCode !== DisconnectReason.loggedOut) {
+        console.log("🔄 Restarting connection in 5 seconds...");
 
         setTimeout(() => {
           startKingsley().catch(console.error);
         }, 5000);
       } else {
         console.log("❌ WhatsApp session was logged out.");
-        sock = null;
       }
     }
   });
