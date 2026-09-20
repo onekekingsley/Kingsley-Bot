@@ -23,7 +23,7 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => {
   res.json({
     bot: "Kingsley",
-    status: sock ? "online" : "starting"
+    status: sock ? "running" : "starting"
   });
 });
 
@@ -73,7 +73,7 @@ app.get("/pair", async (req, res) => {
 
     console.log("✅ Pairing code generated.");
 
-    return res.json({
+    res.json({
       success: true,
       pairingCode: code
     });
@@ -81,7 +81,7 @@ app.get("/pair", async (req, res) => {
   } catch (error) {
     console.error("❌ Pairing error:", error);
 
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
       error: error?.message || String(error)
     });
@@ -92,7 +92,7 @@ app.get("/pair", async (req, res) => {
 });
 
 // =========================
-// START SERVER
+// START WEB SERVER
 // =========================
 
 app.listen(PORT, () => {
@@ -110,15 +110,11 @@ async function startKingsley() {
   const { state, saveCreds } =
     await useMultiFileAuthState("./auth");
 
-  const { version, isLatest } =
+  const { version } =
     await fetchLatestWaWebVersion();
 
   console.log(
     `📱 WhatsApp Web version: ${version.join(".")}`
-  );
-
-  console.log(
-    `📱 Latest version: ${isLatest ? "yes" : "no"}`
   );
 
   sock = makeWASocket({
@@ -138,7 +134,7 @@ async function startKingsley() {
     markOnlineOnConnect: false
   });
 
-  // Save WhatsApp authentication
+  // Save WhatsApp login information
   sock.ev.on(
     "creds.update",
     saveCreds
@@ -215,176 +211,98 @@ async function startKingsley() {
     "messages.upsert",
     async ({ messages }) => {
 
-      for (const message of messages) {
+      const message = messages[0];
 
-        if (
-          !message?.message ||
-          message.key.fromMe
-        ) {
-          continue;
-        }
+      if (
+        !message?.message ||
+        message.key.fromMe
+      ) {
+        return;
+      }
 
-        const text =
-          message.message.conversation ||
-          message.message
-            .extendedTextMessage?.text ||
-          "";
+      const text =
+        message.message.conversation ||
+        message.message
+          .extendedTextMessage?.text ||
+        "";
 
-        const command =
-          text.trim().toLowerCase();
+      const command =
+        text.trim().toLowerCase();
 
-        const chat =
-          message.key.remoteJid;
+      const chat =
+        message.key.remoteJid;
 
-        // =====================
-        // HI
-        // =====================
+      // =====================
+      // HI
+      // =====================
 
-        if (command === "hi" ||
-            command === "hello") {
+      if (command === "hi") {
 
-          await sock.sendMessage(chat, {
-            text:
-              "👋 Hello! I'm Kingsley."
-          });
+        await sock.sendMessage(chat, {
+          text:
+            "👋 Hello! I'm Kingsley."
+        });
 
-          continue;
-        }
+        return;
+      }
 
-        // =====================
-        // MENU
-        // =====================
+      // =====================
+      // MENU
+      // =====================
 
-        if (command === "menu") {
+      if (command === "menu") {
 
-          await sock.sendMessage(chat, {
-            text:
-              "🤖 *KINGSLEY MENU*\n\n" +
+        await sock.sendMessage(chat, {
+          text:
+            "🤖 *KINGSLEY MENU*\n\n" +
+            "• hi — Say hello\n" +
+            "• menu — Show commands\n\n" +
+            "🚀 More features coming soon."
+        });
 
-              "📌 *GENERAL*\n" +
-              "• hi\n" +
-              "• hello\n" +
-              "• ping\n" +
-              "• alive\n" +
-              "• owner\n" +
-              "• menu\n\n" +
+        return;
+      }
 
-              "🧠 *AI*\n" +
-              "• ask\n" +
-              "• chat\n\n" +
+      // =====================
+      // PING
+      // =====================
 
-              "👥 *GROUP*\n" +
-              "• tagall\n" +
-              "• kick\n" +
-              "• promote\n" +
-              "• demote\n\n" +
+      if (command === "ping") {
 
-              "🎨 *MEDIA*\n" +
-              "• sticker\n" +
-              "• toimage\n" +
-              "• toaudio\n\n" +
+        await sock.sendMessage(chat, {
+          text:
+            "🏓 Pong! Kingsley is online."
+        });
 
-              "🎮 *FUN*\n" +
-              "• joke\n" +
-              "• trivia\n\n" +
+        return;
+      }
 
-              "🛠️ *UTILITY*\n" +
-              "• translate\n" +
-              "• weather\n" +
-              "• qr\n\n" +
+      // =====================
+      // ALIVE
+      // =====================
 
-              "⚙️ *BOT*\n" +
-              "• status\n" +
-              "• uptime\n\n" +
+      if (command === "alive") {
 
-              "🚀 More features coming soon."
-          });
+        await sock.sendMessage(chat, {
+          text:
+            "🤖 Kingsley is alive and running."
+        });
 
-          continue;
-        }
+        return;
+      }
 
-        // =====================
-        // PING
-        // =====================
+      // =====================
+      // STATUS
+      // =====================
 
-        if (command === "ping") {
+      if (command === "status") {
 
-          await sock.sendMessage(chat, {
-            text:
-              "🏓 Pong!\n\n" +
-              "🤖 Kingsley is online."
-          });
+        await sock.sendMessage(chat, {
+          text:
+            "🟢 Kingsley is online."
+        });
 
-          continue;
-        }
-
-        // =====================
-        // ALIVE
-        // =====================
-
-        if (command === "alive") {
-
-          await sock.sendMessage(chat, {
-            text:
-              "🤖 *KINGSLEY IS ALIVE!*\n\n" +
-              "🟢 WhatsApp: Connected\n" +
-              "⚡ Bot: Running\n" +
-              "🚀 Status: Online"
-          });
-
-          continue;
-        }
-
-        // =====================
-        // OWNER
-        // =====================
-
-        if (command === "owner") {
-
-          await sock.sendMessage(chat, {
-            text:
-              "👑 *KINGSLEY OWNER*\n\n" +
-              "Kingsley Bot\n" +
-              "🚀 Personal AI Assistant"
-          });
-
-          continue;
-        }
-
-        // =====================
-        // STATUS
-        // =====================
-
-        if (command === "status") {
-
-          await sock.sendMessage(chat, {
-            text:
-              "⚙️ *KINGSLEY STATUS*\n\n" +
-              "🟢 Bot: Online\n" +
-              "🟢 WhatsApp: Connected\n" +
-              "🟢 Server: Running"
-          });
-
-          continue;
-        }
-
-        // =====================
-        // UNKNOWN COMMAND
-        // =====================
-
-        if (
-          command.startsWith(".") ||
-          command.startsWith("/")
-        ) {
-
-          await sock.sendMessage(chat, {
-            text:
-              "❓ Unknown command.\n\n" +
-              "Type *menu* to see available commands."
-          });
-
-          continue;
-        }
+        return;
       }
     }
   );
