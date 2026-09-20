@@ -19,7 +19,7 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => {
   res.json({
     bot: "Kingsley",
-    status: sock ? "running" : "starting"
+    whatsapp: sock ? "socket-created" : "starting"
   });
 });
 
@@ -30,24 +30,32 @@ app.get("/pair", async (req, res) => {
     return res.status(401).send("Unauthorized.");
   }
 
-  if (!process.env.PAIRING_PHONE) {
+  const phone = process.env.PAIRING_PHONE;
+
+  if (!phone) {
     return res.status(500).send("PAIRING_PHONE is not configured.");
   }
 
   if (!sock) {
-    return res.status(503).send("Kingsley is still starting. Try again shortly.");
+    return res.status(503).send(
+      "Kingsley is still starting. Try again shortly."
+    );
   }
 
   if (pairingInProgress) {
-    return res.status(429).send("A pairing request is already running.");
+    return res.status(429).send(
+      "A pairing request is already running."
+    );
   }
 
   try {
     pairingInProgress = true;
 
-    const code = await sock.requestPairingCode(
-      process.env.PAIRING_PHONE
-    );
+    console.log("📲 Requesting WhatsApp pairing code...");
+
+    const code = await sock.requestPairingCode(phone);
+
+    console.log(`📲 Pairing code generated: ${code}`);
 
     res.json({
       success: true,
@@ -55,8 +63,13 @@ app.get("/pair", async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Pairing error:", error);
-    res.status(500).send("Could not create pairing code.");
+    console.error("❌ Pairing error:", error);
+
+    res.status(500).json({
+      success: false,
+      error: error?.message || String(error)
+    });
+
   } finally {
     pairingInProgress = false;
   }
@@ -67,89 +80,132 @@ app.listen(PORT, () => {
 });
 
 async function startKingsley() {
-  const { state, saveCreds } =
-    await useMultiFileAuthState("./auth");
+  try {
+    const { state, saveCreds } =
+      await useMultiFileAuthState("./auth");
 
-  const { version } = await fetchLatestWaWebVersion();
+    const { version, isLatest } =
+      await fetchLatestWaWebVersion();
 
-  console.log(
-    `📱 WhatsApp Web version: ${version.join(".")}`
-  );
+    console.log(
+      `📱 WhatsApp Web version: ${version.join(".")}`
+    );
 
-  sock = makeWASocket({
-    auth: state,
-    version,
-    logger: pino({ level: "silent" }),
-    browser: ["Ubuntu", "Chrome", "1.0.0"]
-  });
+    console.log(
+      `📱 Latest version: ${isLatest ? "yes" : "no"}`
+    );
 
-  sock.ev.on("creds.update", saveCreds);
+    sock = makeWASocket({
+      auth: state,
+      version,
+      logger: pino({ level: "info" }),
+      browser: ["Kingsley", "Chrome", "1.0.0"],
+      markOnlineOnConnect: false
+    });
 
-  sock.ev.on("connection.update", ({
-    connection,
-    lastDisconnect
-  }) => {
+    sock.ev.on("creds.update", saveCreds);
 
-    if (connection === "connecting") {
-      console.log("🔌 Connecting Kingsley...");
-    }
+    sock.ev.on("connection.update", (update) => {
+      const {
+        connection,
+        lastDisconnect,
+        qr
+      } = update;
 
-    if (connection === "open") {
-      console.log("✅ KINGSLEY CONNECTED TO WHATSAPP!");
-    }
-
-    if (connection === "close") {
-      const statusCode =
-        lastDisconnect?.error?.output?.statusCode;
-
-      console.log(
-        `⚠️ WhatsApp connection closed. Code: ${statusCode ?? "unknown"}`
-      );
-
-      sock = null;
-
-      if (statusCode !== DisconnectReason.loggedOut) {
-        console.log("🔄 Restarting connection in 5 seconds...");
-
-        setTimeout(() => {
-          startKingsley().catch(console.error);
-        }, 5000);
-      } else {
-        console.log("❌ WhatsApp session was logged out.");
+      if (connection === "connecting") {
+        console.log("🔌 Connecting Kingsley...");
       }
-    }
-  });
 
-  sock.ev.on("messages.upsert", async ({ messages }) => {
-    const message = messages[0];
+      if (qr) {
+        console.log("📱 QR code received.");
+      }
 
-    if (!message?.message || message.key.fromMe) return;
+      if (connection === "open") {
+        console.log("✅ KINGSLEY CONNECTED TO WHATSAPP!");
+      }
 
-    const text =
-      message.message.conversation ||
-      message.message.extendedTextMessage?.text ||
-      "";
+      if (connection === "close") {
+        const statusCode =
+          lastDisconnect?.error?.output?.statusCode;
 
-    const command = text.trim().toLowerCase();
+        console.log(
+          `⚠️ WhatsApp connection closed. Code: ${
+            statusCode ?? "unknown"
+          }`
+        );
 
-    if (command === "hi") {
-      await sock.sendMessage(message.key.remoteJid, {
-        text: "👋 Hello! I'm Kingsley."
-      });
-    }
+        sock = null;
 
-    if (command === "menu") {
-      await sock.sendMessage(message.key.remoteJid, {
-        text:
-          "🤖 *KINGSLEY MENU*\n\n" +
-          "• hi — Say hello\n" +
-          "• menu — Show commands\n\n" +
-          "🚀 More features coming soon."
-      });
-    }
-  });
+        if (statusCode !== DisconnectReason.loggedOut) {
+          console.log(
+            "🔄 Restarting connection in 5 seconds..."
+          );
+
+          setTimeout(() => {
+            startKingsley().catch((error) => {
+              console.error(
+                "❌ Restart failed:",
+                error
+              );
+            });
+          }, 5000);
+        } else {
+          console.log(
+            "❌ WhatsApp session was logged out."
+          );
+        }
+      }
+    });
+
+    sock.ev.on("messages.upsert", async ({ messages }) => {
+      const message = messages[0];
+
+      if (!message?.message || message.key.fromMe) {
+        return;
+      }
+
+      const text =
+        message.message.conversation ||
+        message.message.extendedTextMessage?.text ||
+        "";
+
+      const command = text.trim().toLowerCase();
+
+      if (command === "hi") {
+        await sock.sendMessage(
+          message.key.remoteJid,
+          {
+            text: "👋 Hello! I'm Kingsley."
+          }
+        );
+      }
+
+      if (command === "menu") {
+        await sock.sendMessage(
+          message.key.remoteJid,
+          {
+            text:
+              "🤖 *KINGSLEY MENU*\n\n" +
+              "• hi — Say hello\n" +
+              "• menu — Show commands\n\n" +
+              "🚀 More features coming soon."
+          }
+        );
+      }
+    });
+
+  } catch (error) {
+    console.error(
+      "❌ Kingsley failed to start:",
+      error
+    );
+
+    sock = null;
+
+    setTimeout(() => {
+      startKingsley().catch(console.error);
+    }, 5000);
+  }
 }
 
-startKingsley().catch((error) => {
-  console.error("❌ Kingsley failed to start:", error);
-});
+startKingsley();
