@@ -1,0 +1,14 @@
+{
+  "name": "kingsley-bot",
+  "version": "1.0.0",
+  "description": "Kingsley WhatsApp Bot",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "pino": "^9.6.0"
+  }
+}
