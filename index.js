@@ -10,7 +10,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 let sock = null;
-let latestPairingCode = null;
+let pairingCode = null;
+let pairingBusy = false;
 
 app.get("/", (req, res) => {
   res.send("🤖 Kingsley is running.");
@@ -19,25 +20,59 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => {
   res.json({
     bot: "Kingsley",
-    status: sock ? "connected to WhatsApp server" : "starting"
+    status: sock ? "connected/connecting" : "starting",
+    pairingReady: !!pairingCode
   });
 });
 
-app.get("/pair", (req, res) => {
-  if (req.query.secret !== process.env.PAIRING_SECRET) {
+app.get("/pair", async (req, res) => {
+  const secret = req.query.secret;
+
+  if (secret !== process.env.PAIRING_SECRET) {
     return res.status(401).send("Unauthorized.");
   }
 
-  if (!latestPairingCode) {
-    return res.status(503).send(
-      "Pairing code is not ready yet. Wait a few seconds and try again."
-    );
+  if (!process.env.PAIRING_PHONE) {
+    return res.status(500).send("PAIRING_PHONE is not configured.");
   }
 
-  res.json({
-    success: true,
-    pairingCode: latestPairingCode
-  });
+  if (!sock) {
+    return res.status(503).send("Kingsley is still starting. Try again shortly.");
+  }
+
+  if (pairingBusy) {
+    return res.status(429).send("A pairing request is already running.");
+  }
+
+  try {
+    pairingBusy = true;
+
+    if (!sock.authState.creds.registered) {
+      console.log("📲 Requesting a fresh pairing code...");
+
+      pairingCode = await sock.requestPairingCode(
+        process.env.PAIRING_PHONE
+      );
+
+      console.log("✅ Pairing code generated.");
+
+      return res.json({
+        success: true,
+        pairingCode
+      });
+    }
+
+    return res.status(400).send("Kingsley is already paired.");
+  } catch (error) {
+    console.error("❌ Pairing error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: error?.message || String(error)
+    });
+  } finally {
+    pairingBusy = false;
+  }
 });
 
 app.listen(PORT, () => {
@@ -48,10 +83,15 @@ async function startKingsley() {
   const { state, saveCreds } =
     await useMultiFileAuthState("./auth");
 
-  const { version } = await fetchLatestWaWebVersion();
+  const { version, isLatest } =
+    await fetchLatestWaWebVersion();
 
   console.log(
     `📱 WhatsApp Web version: ${version.join(".")}`
+  );
+
+  console.log(
+    `📱 Latest version: ${isLatest ? "yes" : "no"}`
   );
 
   sock = makeWASocket({
@@ -64,42 +104,18 @@ async function startKingsley() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("connection.update", async (update) => {
-    const {
-      connection,
-      qr,
-      lastDisconnect
-    } = update;
+  sock.ev.on("connection.update", ({
+    connection,
+    lastDisconnect
+  }) => {
 
     if (connection === "connecting") {
       console.log("🔌 Connecting Kingsley...");
     }
 
-    /*
-     * WhatsApp gives us the QR/registration event here.
-     * Request the pairing code at this point.
-     */
-    if (qr && !state.creds.registered && !latestPairingCode) {
-      try {
-        console.log("📱 WhatsApp registration ready.");
-
-        latestPairingCode =
-          await sock.requestPairingCode(
-            process.env.PAIRING_PHONE
-          );
-
-        console.log("✅ Pairing code is ready.");
-      } catch (error) {
-        console.error(
-          "❌ Pairing-code error:",
-          error?.message || error
-        );
-      }
-    }
-
     if (connection === "open") {
       console.log("✅ KINGSLEY CONNECTED TO WHATSAPP!");
-      latestPairingCode = null;
+      pairingCode = null;
     }
 
     if (connection === "close") {
@@ -107,58 +123,65 @@ async function startKingsley() {
         lastDisconnect?.error?.output?.statusCode;
 
       console.log(
-        `⚠️ WhatsApp connection closed: ${
+        `⚠️ WhatsApp connection closed. Code: ${
           statusCode ?? "unknown"
         }`
       );
 
       sock = null;
-      latestPairingCode = null;
+      pairingCode = null;
 
       if (statusCode !== DisconnectReason.loggedOut) {
-        console.log("🔄 Reconnecting in 5 seconds...");
+        console.log("🔄 Restarting connection in 5 seconds...");
 
         setTimeout(() => {
           startKingsley().catch(console.error);
         }, 5000);
+      } else {
+        console.log("❌ WhatsApp session was logged out.");
       }
     }
   });
 
   sock.ev.on("messages.upsert", async ({ messages }) => {
-    const message = messages[0];
+    for (const message of messages) {
 
-    if (!message?.message || message.key.fromMe) return;
+      if (!message?.message || message.key.fromMe) {
+        continue;
+      }
 
-    const text =
-      message.message.conversation ||
-      message.message.extendedTextMessage?.text ||
-      "";
+      const text =
+        message.message.conversation ||
+        message.message.extendedTextMessage?.text ||
+        "";
 
-    const command = text.trim().toLowerCase();
+      const command = text.trim().toLowerCase();
 
-    if (command === "hi") {
-      await sock.sendMessage(
-        message.key.remoteJid,
-        {
-          text: "👋 Hello! I'm Kingsley."
-        }
-      );
-    }
+      if (command === "hi") {
+        await sock.sendMessage(
+          message.key.remoteJid,
+          {
+            text: "👋 Hello! I'm Kingsley."
+          }
+        );
+      }
 
-    if (command === "menu") {
-      await sock.sendMessage(
-        message.key.remoteJid,
-        {
-          text:
-            "🤖 *KINGSLEY MENU*\n\n" +
-            "• hi — Say hello\n" +
-            "• menu — Show commands\n\n" +
-            "🚀 More features coming soon."
-        }
-      );
+      if (command === "menu") {
+        await sock.sendMessage(
+          message.key.remoteJid,
+          {
+            text:
+              "🤖 *KINGSLEY MENU*\n\n" +
+              "• hi — Say hello\n" +
+              "• menu — Show commands\n\n" +
+              "🚀 More features coming soon."
+          }
+        );
+      }
     }
   });
 }
 
-startKingsley().catch(console.error);
+startKingsley().catch((error) => {
+  console.error("❌ Kingsley failed to start:", error);
+});
