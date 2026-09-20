@@ -1,9 +1,27 @@
+import express from "express";
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason
 } from "@whiskeysockets/baileys";
-
 import pino from "pino";
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get("/", (req, res) => {
+  res.send("🤖 Kingsley is running.");
+});
+
+app.get("/health", (req, res) => {
+  res.json({
+    bot: "Kingsley",
+    status: "online"
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`🌐 Kingsley server running on port ${PORT}`);
+});
 
 async function startKingsley() {
   const { state, saveCreds } =
@@ -16,19 +34,22 @@ async function startKingsley() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
+  sock.ev.on("connection.update", ({
+    connection,
+    lastDisconnect,
+    qr
+  }) => {
 
     if (qr) {
-      console.log("📱 QR code received.");
-      console.log("Use a WhatsApp-compatible pairing method to connect.");
+      console.log("📱 WhatsApp pairing code/QR is available.");
     }
 
     if (connection === "connecting") {
-      console.log("🔌 Kingsley is connecting...");
+      console.log("🔌 Connecting Kingsley to WhatsApp...");
     }
 
     if (connection === "open") {
-      console.log("✅ KINGSLEY IS CONNECTED!");
+      console.log("✅ KINGSLEY CONNECTED TO WHATSAPP!");
     }
 
     if (connection === "close") {
@@ -37,7 +58,7 @@ async function startKingsley() {
 
       if (statusCode !== DisconnectReason.loggedOut) {
         console.log("🔄 Connection closed. Restarting...");
-        startKingsley();
+        setTimeout(startKingsley, 5000);
       } else {
         console.log("❌ WhatsApp session was logged out.");
       }
@@ -74,4 +95,6 @@ async function startKingsley() {
   });
 }
 
-startKingsley();
+startKingsley().catch((error) => {
+  console.error("❌ Kingsley failed to start:", error);
+});
