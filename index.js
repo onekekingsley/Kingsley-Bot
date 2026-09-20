@@ -58,7 +58,7 @@ async function startKingsley() {
     auth: state,
     version,
     logger: pino({ level: "info" }),
-    browser: ["Kingsley", "Chrome", "1.0.0"],
+    browser: ["Ubuntu", "Chrome", "1.0.0"],
     markOnlineOnConnect: false
   });
 
